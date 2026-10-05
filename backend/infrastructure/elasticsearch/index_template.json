@@ -1,0 +1,58 @@
+{
+  "index_patterns": ["sentineliq-events-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 3,
+      "number_of_replicas": 1,
+      "index.lifecycle.name": "sentineliq-events-ilm-policy",
+      "index.lifecycle.rollover_alias": "sentineliq-events"
+    },
+    "mappings": {
+      "properties": {
+        "event_id": { "type": "keyword" },
+        "organization_id": { "type": "keyword" },
+        "@timestamp": { "type": "date" },
+        "received_at": { "type": "date" },
+        
+        "source": { "type": "keyword" },
+        "source_event_id": { "type": "keyword" },
+        "event_type": { "type": "keyword" },
+        
+        "user_id": { "type": "keyword" },
+        "device_id": { "type": "keyword" },
+        
+        "source_ip": { "type": "ip" },
+        "source_port": { "type": "integer" },
+        "destination_ip": { "type": "ip" },
+        "destination_port": { "type": "integer" },
+        "destination_domain": { "type": "keyword" },
+        "destination_url": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } } },
+        "protocol": { "type": "keyword" },
+        
+        "action": { "type": "keyword" },
+        "resource": { "type": "keyword" },
+        "resource_type": { "type": "keyword" },
+        "severity": { "type": "keyword" },
+        
+        "bytes_in": { "type": "long" },
+        "bytes_out": { "type": "long" },
+        
+        "process_name": { "type": "keyword" },
+        "process_id": { "type": "long" },
+        "parent_process_id": { "type": "long" },
+        
+        "application": { "type": "keyword" },
+        "authentication_method": { "type": "keyword" },
+        
+        "data_classification": { "type": "keyword" },
+        "sensitivity": { "type": "keyword" },
+        
+        "metadata": { "type": "object", "dynamic": true },
+        "raw_event": { "type": "object", "enabled": false },
+        
+        "source_geo": { "type": "geo_point" },
+        "destination_geo": { "type": "geo_point" }
+      }
+    }
+  }
+}

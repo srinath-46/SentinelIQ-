@@ -1,0 +1,191 @@
+version: '3.8'
+
+services:
+  # 1. API Backend (FastAPI)
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - PROJECT_NAME=SentinelIQ
+      - POSTGRES_SERVER=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=sentineliq_secret
+      - POSTGRES_DB=sentineliq
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - REDIS_URL=redis://redis:6379/0
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-your-super-secret-jwt-token-with-at-least-32-characters-long}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - sentineliq-net
+
+  # 2. Intelligence Processor Pipeline
+  intelligence_processor:
+    build:
+      context: .
+      dockerfile: intelligence/Dockerfile
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    depends_on:
+      kafka:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - sentineliq-net
+
+  # 3. Detection Rule & Correlation Engine
+  detection_engine:
+    build:
+      context: .
+      dockerfile: detection/Dockerfile
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - REDIS_URL=redis://redis:6379/1
+      - DATABASE_URL=postgresql://postgres:sentineliq_secret@postgres:5432/sentineliq
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - sentineliq-net
+
+  # 4. PostgreSQL (Relational DB for config, users, incidents)
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=sentineliq_secret
+      - POSTGRES_DB=sentineliq
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentineliq-net
+
+  # 4. Elasticsearch (Telemetry and full-text search)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+    networks:
+      - sentineliq-net
+
+  # 5. Kafka (Event Streaming)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - sentineliq-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server 127.0.0.1:9092 --list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - sentineliq-net
+
+  # 6. Logstash (Kafka to Elasticsearch routing)
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.10.2
+    volumes:
+      - ./infrastructure/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - sentineliq-net
+
+  # 7. Redis (Caching & Celery broker)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentineliq-net
+
+  # 8. Celery (Async background tasks - e.g. Report generation)
+  celery_worker:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    command: celery -A app.worker worker --loglevel=info
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - POSTGRES_SERVER=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=sentineliq_secret
+      - POSTGRES_DB=sentineliq
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - sentineliq-net
+
+networks:
+  sentineliq-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  es_data:

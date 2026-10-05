@@ -1,0 +1,12 @@
+{
+  "venvPath": "./services/api",
+  "venv": "venv",
+  "pythonPath": "./services/api/venv/Scripts/python.exe",
+  "extraPaths": [
+    "./services/api",
+    "./services/api/app",
+    "./pipeline",
+    "./intelligence",
+    "./services/api/venv/Lib/site-packages"
+  ]
+}
